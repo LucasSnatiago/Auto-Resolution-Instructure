@@ -1,5 +1,3 @@
-# Auto Resolution Instructure
+# Auto 1080p no Puc Instructure
 
-Auto set the resolution for the www.instructure.com site.
-
-Vibe coded :)
+O auto do player de vídeo é ruim. Vibe codei uma extensão que auto coloca 1080p.
