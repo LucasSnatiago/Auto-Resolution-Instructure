@@ -8,8 +8,10 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "instructure-video-fix@lu.santi.oli@gmail.com",
-      "data_collection_permissions": []
+      "id": "instructure-video-fix@lucassnatiago.com.br",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "content_scripts": [
