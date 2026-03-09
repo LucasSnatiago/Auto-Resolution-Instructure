@@ -4,8 +4,13 @@
   "version": "1.0",
   "description": "Automatiza a troca de resolução de vídeos no Instructure.",
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "storage"
   ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Configurações de Resolução"
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "instructure-video-fix@lucassnatiago.com.br",
@@ -21,7 +26,7 @@
         "*://*.instructuremedia.com/*"
       ],
       "js": ["content.js"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "all_frames": true
     }
   ]

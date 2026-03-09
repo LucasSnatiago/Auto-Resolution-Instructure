@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Auto-Resolution Settings</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Instructure <span class="accent">HD</span></h1>
+        </header>
+
+        <section class="control-group">
+            <div class="label-box">
+                <span class="label">Ativar Automação</span>
+                <p class="description">Troca a qualidade ao carregar</p>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="toggle-auto">
+                <span class="slider round"></span>
+            </label>
+        </section>
+
+        <section class="control-group vertical">
+            <span class="label">Resolução Preferida</span>
+            <div class="options-grid">
+                <label class="option">
+                    <input type="radio" name="res" value="Auto">
+                    <span class="option-card">Auto</span>
+                </label>
+                <label class="option">
+                    <input type="radio" name="res" value="1080p" checked>
+                    <span class="option-card">1080p</span>
+                </label>
+                <label class="option">
+                    <input type="radio" name="res" value="720p">
+                    <span class="option-card">720p</span>
+                </label>
+                <label class="option">
+                    <input type="radio" name="res" value="480p">
+                    <span class="option-card">480p</span>
+                </label>
+            </div>
+        </section>
+
+        <footer>
+            <div id="status-msg">Configurações salvas!</div>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
