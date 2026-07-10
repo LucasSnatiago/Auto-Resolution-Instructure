@@ -11,7 +11,7 @@ function showStatus() {
 // Carrega configurações salvas
 chrome.storage.local.get(['enabled', 'resolution'], (data) => {
   toggleAuto.checked = data.enabled !== false; // Default true
-  
+
   if (data.resolution) {
     const radio = Array.from(resRadios).find(r => r.value === data.resolution);
     if (radio) radio.checked = true;
