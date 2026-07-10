@@ -1,64 +1,80 @@
-// content.js
-console.log("Instructure Auto-Resolution: Iniciado em " + window.location.href);
+// content.js - v1.3
+// Instructure Auto-Resolution Extension
+// Automatically selects the best quality level on Canvas Studio videos.
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+(function () {
+  "use strict";
 
-/**
- * Estratégia 1: Usar a API JavaScript do Video.js diretamente
- * Isso é mais confiável que clicar em elementos do DOM.
- * Injeta um script na página para acessar o player videojs.
- */
-function injectPlayerScript(targetRes) {
-  const script = document.createElement('script');
-  script.textContent = `
+  const LOG_PREFIX = "Instructure Auto-Resolution:";
+
+  /**
+   * Only run inside the actual player frame (instructuremedia.com).
+   * The parent Canvas page just embeds the player via iframe — no player exists there.
+   */
+  function isPlayerFrame() {
+    return window.location.hostname.includes("instructuremedia.com");
+  }
+
+  if (!isPlayerFrame()) {
+    // Silently exit in the parent frame — nothing to do here.
+    return;
+  }
+
+  console.log(`${LOG_PREFIX} Iniciado no frame do player (${window.location.href})`);
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * Strategy 1 (primary): Use Video.js API directly via injected page script.
+   * This is the most reliable method — no DOM clicking needed.
+   */
+  function injectPlayerScript(targetRes) {
+    const script = document.createElement("script");
+    script.textContent = `
     (function() {
-      const targetRes = "${targetRes}";
-      const targetHeight = parseInt(targetRes) || 1080;
+      const LOG = "Instructure Auto-Resolution [API]:";
+      const targetHeight = parseInt("${targetRes}") || 1080;
+      let resolved = false;
 
       function setQuality() {
-        // Tenta achar o player video.js
-        const players = window.videojs && window.videojs.getAllPlayers
+        if (resolved) return true;
+
+        const players = (window.videojs && window.videojs.getAllPlayers)
           ? window.videojs.getAllPlayers()
           : [];
 
-        // Também tenta por ID do elemento video
-        const videoElements = document.querySelectorAll('.video-js, [data-player]');
-        
         let player = players[0];
-        
-        if (!player && videoElements.length > 0) {
-          const el = videoElements[0];
-          const id = el.id || el.getAttribute('data-player');
-          if (id && window.videojs) {
-            try { player = window.videojs(id); } catch(e) {}
+
+        // Fallback: try to get player from video-js element
+        if (!player) {
+          const el = document.querySelector('.video-js, [data-player]');
+          if (el) {
+            const id = el.id || el.getAttribute('data-player');
+            if (id && window.videojs) {
+              try { player = window.videojs(id); } catch(e) {}
+            }
           }
         }
 
         if (!player) return false;
 
-        // Verifica se qualityLevels está disponível
         const qualityLevels = player.qualityLevels && player.qualityLevels();
         if (!qualityLevels || qualityLevels.length === 0) return false;
 
-        console.log("Instructure Auto-Resolution [injected]: Encontrado " + qualityLevels.length + " quality levels");
+        console.log(LOG, "Encontrado " + qualityLevels.length + " quality levels");
 
-        // Lista os levels disponíveis
+        // Log available levels
         const levels = [];
         for (let i = 0; i < qualityLevels.length; i++) {
-          levels.push({
-            index: i,
-            height: qualityLevels[i].height,
-            bitrate: qualityLevels[i].bitrate,
-            enabled: qualityLevels[i].enabled
-          });
+          levels.push(qualityLevels[i].height + "p");
         }
-        console.log("Instructure Auto-Resolution [injected]: Levels:", JSON.stringify(levels));
+        console.log(LOG, "Disponíveis:", levels.join(", "));
 
-        // Encontra o level mais próximo do target
+        // Find exact match or closest (highest available)
         let bestIndex = -1;
         let bestHeight = 0;
-        let fallbackIndex = -1;
-        let fallbackHeight = 0;
+        let highestIndex = 0;
+        let highestHeight = 0;
 
         for (let i = 0; i < qualityLevels.length; i++) {
           const h = qualityLevels[i].height;
@@ -67,260 +83,238 @@ function injectPlayerScript(targetRes) {
             bestHeight = h;
             break;
           }
-          // Fallback: a maior resolução disponível abaixo do target
-          if (h > fallbackHeight) {
-            fallbackHeight = h;
-            fallbackIndex = i;
+          if (h > highestHeight) {
+            highestHeight = h;
+            highestIndex = i;
           }
         }
 
-        const selectedIndex = bestIndex !== -1 ? bestIndex : fallbackIndex;
+        // Use exact match, or highest available as fallback
+        const selectedIndex = bestIndex !== -1 ? bestIndex : highestIndex;
+        const selectedHeight = bestIndex !== -1 ? bestHeight : highestHeight;
+
         if (selectedIndex === -1) return false;
 
-        const selectedHeight = bestIndex !== -1 ? bestHeight : fallbackHeight;
-
-        // Desabilita todos os levels exceto o desejado
+        // Enable only the desired quality level
         for (let i = 0; i < qualityLevels.length; i++) {
           qualityLevels[i].enabled = (i === selectedIndex);
         }
 
-        console.log("Instructure Auto-Resolution [injected]: Qualidade ajustada para " + selectedHeight + "p");
-
-        // Dispara evento customizado para o content script saber que deu certo
-        document.dispatchEvent(new CustomEvent('ires-quality-set', { detail: { height: selectedHeight } }));
+        resolved = true;
+        console.log(LOG, "Qualidade ajustada para " + selectedHeight + "p ✓");
+        document.dispatchEvent(new CustomEvent("ires-quality-set", { detail: { height: selectedHeight } }));
         return true;
       }
 
-      // Tenta imediatamente e depois com retry
-      if (!setQuality()) {
-        let attempts = 0;
-        const interval = setInterval(function() {
-          attempts++;
-          if (setQuality() || attempts > 30) {
-            clearInterval(interval);
-            if (attempts > 30) {
-              console.log("Instructure Auto-Resolution [injected]: Timeout - player não encontrado via API");
-            }
+      // Try immediately
+      if (setQuality()) return;
+
+      // Retry with interval — player may still be loading
+      let attempts = 0;
+      const maxAttempts = 20;
+      const interval = setInterval(function() {
+        attempts++;
+        if (setQuality() || attempts >= maxAttempts) {
+          clearInterval(interval);
+          if (!resolved && attempts >= maxAttempts) {
+            console.log(LOG, "Timeout — player ou qualityLevels não disponível via API");
+            document.dispatchEvent(new CustomEvent("ires-api-failed"));
           }
-        }, 1000);
-      }
+        }
+      }, 1500);
     })();
   `;
-  document.documentElement.appendChild(script);
-  script.remove();
-}
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+  }
 
-/**
- * Estratégia 2: Clicar nos elementos do DOM (fallback)
- * Usa seletores atualizados para o videojs-contrib-quality-menu
- */
-async function attemptResolutionChangeDOM(targetRes) {
-  // O videojs-contrib-quality-menu cria um botão direto de qualidade
-  // Seletores possíveis para o botão de qualidade:
-  const qualityBtn = document.querySelector([
-    '.vjs-quality-menu-button',                          // Classe principal do plugin
-    'button[aria-label="Quality Levels"]',               // aria-label do plugin
-    'button[aria-label*="Quality"]',                     // aria-label parcial
-    '.vjs-quality-menu-wrapper .vjs-menu-button',        // Dentro do wrapper
-    '.vjs-icon-cog',                                     // Ícone de engrenagem (fallback)
-    'button.vjs-menu-button[title*="Quality"]',          // title attribute
-    // Seletores antigos como fallback extra:
-    'button.controls-button[aria-label*="Sett"]',
-    'button.controls-button[aria-label*="Config"]',
-    '.vjs-settings-control',
-    '[title*="Settings"]'
-  ].join(', '));
+  /**
+   * Strategy 2 (fallback): Single DOM click attempt.
+   * Only runs ONCE if API fails. No loops.
+   */
+  async function attemptResolutionChangeDOM(targetRes) {
+    const targetHeight = parseInt(targetRes) || 1080;
 
-  if (!qualityBtn) return false;
+    // Wait a bit for player UI
+    await sleep(1000);
 
-  console.log("Instructure Auto-Resolution: Botão encontrado!", qualityBtn.className);
+    const qualityBtn = document.querySelector(
+      [
+        ".vjs-quality-menu-button",
+        'button[aria-label="Quality Levels"]',
+        'button[aria-label*="Quality"]',
+        ".vjs-quality-menu-wrapper .vjs-menu-button",
+        ".vjs-icon-cog",
+      ].join(", ")
+    );
 
-  // Se é um menu button do video.js, o menu já pode estar visível ao hover
-  // Vamos clicar para abrir
-  qualityBtn.click();
-  await sleep(400);
-
-  // Procura items do menu de qualidade
-  // O videojs-contrib-quality-menu usa .vjs-menu-item com aria-checked
-  const menuItems = document.querySelectorAll([
-    '.vjs-quality-menu-wrapper .vjs-menu-item',
-    '.vjs-quality-menu-button + .vjs-menu .vjs-menu-item',
-    '.vjs-menu-button.vjs-quality-menu-button .vjs-menu .vjs-menu-item',
-    // Menu genérico do video.js 
-    '.vjs-menu.vjs-lock-showing .vjs-menu-item',
-    // Seletores mais antigos
-    '[role="menuitemradio"]',
-    '.vjs-menu-item'
-  ].join(', '));
-
-  if (menuItems.length === 0) {
-    // Talvez precise navegar para submenu "Quality" primeiro (players antigos)
-    const allElements = Array.from(document.querySelectorAll('.vjs-menu-item, button, li, span'));
-    const qualitySubmenu = allElements.find(el => {
-      const txt = el.textContent.trim().toLowerCase();
-      return (txt === 'quality' || txt === 'qualidade' || txt === 'quality levels') && el.offsetParent !== null;
-    });
-
-    if (qualitySubmenu) {
-      qualitySubmenu.click();
-      await sleep(400);
-    } else {
-      qualityBtn.click(); // Fecha
+    if (!qualityBtn) {
+      console.log(`${LOG_PREFIX} Botão de qualidade não encontrado no DOM`);
       return false;
     }
-  }
 
-  // Re-busca após possível submenu
-  const options = Array.from(document.querySelectorAll([
-    '.vjs-quality-menu-wrapper .vjs-menu-item',
-    '.vjs-menu.vjs-lock-showing .vjs-menu-item',
-    '[role="menuitemradio"]',
-    '.vjs-menu-item'
-  ].join(', '))).filter(el => el.offsetParent !== null); // Só visíveis
+    console.log(`${LOG_PREFIX} Botão encontrado, tentando via DOM...`);
 
-  console.log("Instructure Auto-Resolution: Opções:", options.map(o => o.textContent.trim()));
+    // Open the quality menu
+    qualityBtn.click();
+    await sleep(500);
 
-  const targetHeight = parseInt(targetRes) || 1080;
-  
-  // Tenta encontrar a resolução alvo
-  let targetBtn = options.find(opt => {
-    const text = opt.textContent.trim().toLowerCase();
-    return text.includes(targetRes.toLowerCase()) || text.includes(targetHeight + 'p');
-  });
+    // Get visible menu items
+    const options = Array.from(
+      document.querySelectorAll(
+        [
+          ".vjs-quality-menu-wrapper .vjs-menu-item",
+          ".vjs-quality-menu-button .vjs-menu .vjs-menu-item",
+          ".vjs-menu.vjs-lock-showing .vjs-menu-item",
+          '[role="menuitemradio"]',
+        ].join(", ")
+      )
+    ).filter((el) => el.offsetParent !== null);
 
-  // Fallback: 720p se 1080p não existe
-  if (!targetBtn && targetHeight >= 1080) {
-    targetBtn = options.find(opt => opt.textContent.toLowerCase().includes('720p'));
-  }
+    if (options.length === 0) {
+      console.log(`${LOG_PREFIX} Menu abriu mas sem opções visíveis`);
+      qualityBtn.click(); // Close menu
+      return false;
+    }
 
-  // Fallback: HD se não encontrou por resolução
-  if (!targetBtn && targetHeight >= 720) {
-    targetBtn = options.find(opt => {
+    console.log(
+      `${LOG_PREFIX} Opções:`,
+      options.map((o) => o.textContent.trim())
+    );
+
+    // Find best match
+    let targetBtn = options.find((opt) => {
       const text = opt.textContent.trim().toLowerCase();
-      return text === 'hd' || text.includes('high');
+      return (
+        text.includes(targetHeight + "p") ||
+        text.includes(targetRes.toLowerCase())
+      );
     });
-  }
 
-  if (targetBtn) {
-    const isSelected = targetBtn.getAttribute('aria-checked') === 'true' ||
-                       targetBtn.classList.contains('vjs-selected');
-    if (!isSelected) {
-      targetBtn.click();
-      console.log(`Instructure Auto-Resolution: QUALIDADE AJUSTADA PARA ${targetBtn.textContent.trim()}!`);
-    } else {
-      console.log("Instructure Auto-Resolution: Já está na qualidade desejada.");
+    // Fallback to 720p if target not available
+    if (!targetBtn && targetHeight >= 1080) {
+      targetBtn = options.find((opt) =>
+        opt.textContent.toLowerCase().includes("720p")
+      );
     }
-    return true;
-  }
 
-  // Não encontrou - fecha o menu
-  qualityBtn.click();
-  return false;
-}
+    // Fallback to HD
+    if (!targetBtn && targetHeight >= 720) {
+      targetBtn = options.find((opt) => {
+        const text = opt.textContent.trim().toLowerCase();
+        return text === "hd" || text.includes("high");
+      });
+    }
 
-/**
- * Observa o DOM para detectar quando o player é carregado dinamicamente
- */
-function observePlayer(callback) {
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        if (node.nodeType !== 1) continue;
-        // Detecta quando um player video.js é adicionado
-        if (node.classList && (
-          node.classList.contains('video-js') ||
-          node.classList.contains('vjs-quality-menu-wrapper') ||
-          node.querySelector && node.querySelector('.video-js, .vjs-quality-menu-button')
-        )) {
-          observer.disconnect();
-          callback();
-          return;
-        }
+    if (targetBtn) {
+      const isSelected =
+        targetBtn.getAttribute("aria-checked") === "true" ||
+        targetBtn.classList.contains("vjs-selected");
+
+      if (!isSelected) {
+        targetBtn.click();
+        console.log(
+          `${LOG_PREFIX} DOM: Qualidade ajustada para ${targetBtn.textContent.trim()} ✓`
+        );
+      } else {
+        console.log(`${LOG_PREFIX} DOM: Já está na qualidade desejada ✓`);
+        qualityBtn.click(); // Close menu
       }
+      return true;
     }
-  });
 
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true
-  });
+    // Didn't find target — close menu and give up
+    console.log(`${LOG_PREFIX} Resolução alvo não encontrada nas opções`);
+    qualityBtn.click();
+    return false;
+  }
 
-  // Safety timeout - para de observar após 2 minutos
-  setTimeout(() => observer.disconnect(), 120000);
-  
-  return observer;
-}
+  /**
+   * Main initialization — runs only in the player frame.
+   */
+  async function init() {
+    const data = await new Promise((resolve) => {
+      chrome.storage.local.get(["enabled", "resolution"], resolve);
+    });
 
-async function init() {
-  chrome.storage.local.get(['enabled', 'resolution'], async (data) => {
     const isEnabled = data.enabled !== false;
-    const targetRes = data.resolution || '1080p';
+    const targetRes = data.resolution || "1080p";
 
     if (!isEnabled) {
-      console.log("Instructure Auto-Resolution: Desativado no popup.");
+      console.log(`${LOG_PREFIX} Extensão desativada.`);
       return;
     }
 
-    console.log(`Instructure Auto-Resolution: Buscando player (Alvo: ${targetRes})...`);
+    console.log(`${LOG_PREFIX} Alvo: ${targetRes}`);
 
     let resolved = false;
 
-    // Listener para o evento do script injetado
-    document.addEventListener('ires-quality-set', (e) => {
+    // Listen for success event from injected script
+    document.addEventListener("ires-quality-set", (e) => {
       resolved = true;
-      console.log(`Instructure Auto-Resolution: Sucesso via API! (${e.detail.height}p)`);
+      console.log(`${LOG_PREFIX} Sucesso via API! (${e.detail.height}p)`);
     });
 
-    // Estratégia 1: Espera um pouco e tenta via API JavaScript (mais confiável)
-    await sleep(2000);
-    injectPlayerScript(targetRes);
-
-    // Espera um pouco para ver se a Estratégia 1 funcionou
-    await sleep(3000);
-
-    if (resolved) return;
-
-    // Estratégia 2: Tenta via DOM clicks (fallback)
-    console.log("Instructure Auto-Resolution: API não funcionou, tentando via DOM...");
-    
-    let attempts = 0;
-    const maxAttempts = 30;
-
-    while (attempts < maxAttempts && !resolved) {
+    // Listen for API failure — triggers single DOM fallback attempt
+    document.addEventListener("ires-api-failed", async () => {
+      if (resolved) return;
+      console.log(
+        `${LOG_PREFIX} API falhou, tentando fallback DOM (única tentativa)...`
+      );
       const success = await attemptResolutionChangeDOM(targetRes);
       if (success) {
         resolved = true;
-        console.log("Instructure Auto-Resolution: Sucesso via DOM!");
-        break;
+      } else {
+        console.log(
+          `${LOG_PREFIX} Falha total — não foi possível ajustar a qualidade.`
+        );
       }
-      attempts++;
-      await sleep(1500);
-    }
+    });
 
-    if (!resolved) {
-      // Estratégia 3: Observa o DOM caso o player ainda não tenha carregado
-      console.log("Instructure Auto-Resolution: Player não encontrado, observando DOM...");
-      observePlayer(async () => {
-        console.log("Instructure Auto-Resolution: Player detectado via MutationObserver!");
-        await sleep(1500);
-        injectPlayerScript(targetRes);
-        await sleep(3000);
-        if (!resolved) {
-          // Último fallback via DOM
-          for (let i = 0; i < 10; i++) {
-            const success = await attemptResolutionChangeDOM(targetRes);
-            if (success) break;
-            await sleep(1500);
-          }
+    // Wait for page to be somewhat ready before injecting
+    await sleep(2000);
+
+    // Check if the page has video player indications
+    const hasPlayerIndication =
+      document.querySelector(".video-js, video, [data-player], .vjs-tech") ||
+      window.location.pathname.includes("lti/launch");
+
+    if (!hasPlayerIndication) {
+      console.log(`${LOG_PREFIX} Player ainda não visível, aguardando...`);
+      // Use MutationObserver to wait for player to appear
+      const observer = new MutationObserver(() => {
+        if (resolved) {
+          observer.disconnect();
+          return;
+        }
+        const playerEl = document.querySelector(
+          ".video-js, video, [data-player]"
+        );
+        if (playerEl) {
+          observer.disconnect();
+          console.log(
+            `${LOG_PREFIX} Player detectado via observer, injetando API...`
+          );
+          setTimeout(() => injectPlayerScript(targetRes), 1500);
         }
       });
-    }
-  });
-}
 
-// Inicia quando o DOM estiver pronto ou imediatamente se já estiver
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+      // Safety timeout — stop observing after 60s
+      setTimeout(() => observer.disconnect(), 60000);
+    } else {
+      // Player indication found — inject API script
+      injectPlayerScript(targetRes);
+    }
+  }
+
+  // Start when DOM is ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
